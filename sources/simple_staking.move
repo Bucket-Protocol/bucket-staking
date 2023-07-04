@@ -1,9 +1,13 @@
 module bucket_staking::simple_staking {
 
+    use std::ascii::String;
     use sui::object::{Self, ID, UID};
+    use sui::clock::{Self, Clock};
     use sui::tx_context::{Self, TxContext};
     use sui::dynamic_field as df;
     use sui::transfer;
+    use sui::event;
+    use std::type_name;
 
     struct TokenRegistry<phantom T> has key, store {
         id: UID,
@@ -19,6 +23,18 @@ module bucket_staking::simple_staking {
         token_id: ID,
     }
 
+    struct StakeEvent has copy, drop {
+        type: String,
+        registry_id: ID,
+        timestamp: u64,
+    }
+
+    struct UnstakeEvent has copy, drop {
+        type: String,
+        registry_id: ID,
+        timestamp: u64,
+    }
+
     public fun new_registry<T>(ctx: &mut TxContext): TokenRegistry<T> {
         TokenRegistry { id: object::new(ctx) }
     }
@@ -28,6 +44,7 @@ module bucket_staking::simple_staking {
     }
 
     public fun stake<T: key + store>(
+        clock: &Clock,
         registry: &mut TokenRegistry<T>,
         token: T,
         ctx: &mut TxContext,
@@ -41,6 +58,12 @@ module bucket_staking::simple_staking {
                 token,
             },
         );
+        event::emit(StakeEvent {
+            type: type_name::into_string(type_name::get<T>()),
+            registry_id: object::id(registry),
+            timestamp: clock::timestamp_ms(clock),
+        });
+
         StakeProof {
             id: object::new(ctx),
             token_id,
@@ -48,15 +71,17 @@ module bucket_staking::simple_staking {
     }
 
     public entry fun stake_and_get_proof<T: key + store>(
+        clock: &Clock,
         registry: &mut TokenRegistry<T>,
         token: T,
         ctx: &mut TxContext,
     ) {
-        let proof = stake(registry, token, ctx);
+        let proof = stake(clock, registry, token, ctx);
         transfer::transfer(proof, tx_context::sender(ctx));
     }
 
     public fun unstake<T: key + store>(
+        clock: &Clock,
         registry: &mut TokenRegistry<T>,
         proof: StakeProof<T>,
     ): T {
@@ -67,15 +92,21 @@ module bucket_staking::simple_staking {
             token_id,
         );
         let TokenBox { owner: _, token } = token_box;
+        event::emit(StakeEvent {
+            type: type_name::into_string(type_name::get<T>()),
+            registry_id: object::id(registry),
+            timestamp: clock::timestamp_ms(clock),
+        });
         token
     }
 
     public entry fun unstake_and_get_token<T: key + store>(
+        clock: &Clock,
         registry: &mut TokenRegistry<T>,
         proof: StakeProof<T>,
         ctx: &TxContext,
     ) {
-        let token = unstake(registry, proof);
+        let token = unstake(clock, registry, proof);
         transfer::public_transfer(token, tx_context::sender(ctx));
     }
 
@@ -92,6 +123,7 @@ module bucket_staking::simple_staking {
 
         let scenario_val = ts::begin(dev);
         let scenario = &mut scenario_val;
+        let clock = clock::create_for_testing(ts::ctx(scenario));
         {
             create_registry<Coin<SUI>>(ts::ctx(scenario));
             let coin = coin::from_balance(balance::create_for_testing<SUI>(100), ts::ctx(scenario));
@@ -104,7 +136,7 @@ module bucket_staking::simple_staking {
             assert!(ts::has_most_recent_for_sender<Coin<SUI>>(scenario), 0);
             assert!(!ts::has_most_recent_for_sender<StakeProof<Coin<SUI>>>(scenario), 0);
             let coin = ts::take_from_sender<Coin<SUI>>(scenario);
-            stake_and_get_proof(&mut registry, coin, ts::ctx(scenario));
+            stake_and_get_proof(&clock, &mut registry, coin, ts::ctx(scenario));
             ts::return_shared(registry);
         };
 
@@ -114,7 +146,7 @@ module bucket_staking::simple_staking {
             assert!(!ts::has_most_recent_for_sender<Coin<SUI>>(scenario), 0);
             assert!(ts::has_most_recent_for_sender<StakeProof<Coin<SUI>>>(scenario), 0);
             let proof = ts::take_from_sender<StakeProof<Coin<SUI>>>(scenario);
-            unstake_and_get_token(&mut registry, proof, ts::ctx(scenario));
+            unstake_and_get_token(&clock, &mut registry, proof, ts::ctx(scenario));
             ts::return_shared(registry);
         };
 
@@ -124,6 +156,7 @@ module bucket_staking::simple_staking {
             assert!(!ts::has_most_recent_for_sender<StakeProof<Coin<SUI>>>(scenario), 0);
         };
 
+        clock::destroy_for_testing(clock);
         ts::end(scenario_val);
     }
 }
