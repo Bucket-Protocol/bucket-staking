@@ -4,7 +4,7 @@ module bucket_staking::simple_staking {
     use sui::object::{Self, ID, UID};
     use sui::clock::{Self, Clock};
     use sui::tx_context::{Self, TxContext};
-    use sui::dynamic_field as df;
+    use sui::dynamic_object_field as dof;
     use sui::transfer;
     use sui::event;
     use std::type_name;
@@ -13,7 +13,8 @@ module bucket_staking::simple_staking {
         id: UID,
     }
 
-    struct TokenBox<T: key + store> has store {
+    struct TokenBox<T: key + store> has key, store {
+        id: UID,
         owner: address,
         token: T,
     }
@@ -21,6 +22,7 @@ module bucket_staking::simple_staking {
     struct StakeProof<phantom T> has key, store {
         id: UID,
         token_id: ID,
+        box_id: ID,
     }
 
     struct StakeEvent has copy, drop {
@@ -50,10 +52,13 @@ module bucket_staking::simple_staking {
         ctx: &mut TxContext,
     ): StakeProof<T> {
         let token_id = object::id(&token);
-        df::add(
+        let box_uid = object::new(ctx);
+        let box_id = object::uid_to_inner(&box_uid);
+        dof::add(
             &mut registry.id,
             token_id,
             TokenBox {
+                id: box_uid,
                 owner: tx_context::sender(ctx),
                 token,
             },
@@ -67,6 +72,7 @@ module bucket_staking::simple_staking {
         StakeProof {
             id: object::new(ctx),
             token_id,
+            box_id,
         }
     }
 
@@ -85,13 +91,14 @@ module bucket_staking::simple_staking {
         registry: &mut TokenRegistry<T>,
         proof: StakeProof<T>,
     ): T {
-        let StakeProof { id, token_id } = proof;
+        let StakeProof { id, token_id, box_id: _ } = proof;
         object::delete(id);
-        let token_box = df::remove<ID, TokenBox<T>>(
+        let token_box = dof::remove<ID, TokenBox<T>>(
             &mut registry.id,
             token_id,
         );
-        let TokenBox { owner: _, token } = token_box;
+        let TokenBox { id, owner: _, token } = token_box;
+        object::delete(id);
         event::emit(StakeEvent {
             type: type_name::into_string(type_name::get<T>()),
             registry_id: object::id(registry),
