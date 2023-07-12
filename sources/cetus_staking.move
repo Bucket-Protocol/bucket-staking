@@ -10,6 +10,7 @@ module bucket_staking::cetus_staking {
 
     const EStakeInvalidToken: u64 = 0;
     const EUnstakeNonExistentToken: u64 = 1;
+    const EWrongRegistry: u64 = 2;
 
     struct TokenRegistry has key, store {
         id: UID,
@@ -24,6 +25,7 @@ module bucket_staking::cetus_staking {
 
     struct StakeProof has key, store {
         id: UID,
+        registry_id: ID,
         box_id: ID,
     }
 
@@ -82,6 +84,7 @@ module bucket_staking::cetus_staking {
 
         StakeProof {
             id: object::new(ctx),
+            registry_id: object::uid_to_inner(&registry.id),
             box_id,
         }
     }
@@ -101,7 +104,8 @@ module bucket_staking::cetus_staking {
         registry: &mut TokenRegistry,
         proof: StakeProof,
     ): Position {
-        let StakeProof { id, box_id } = proof;
+        let StakeProof { id, registry_id, box_id } = proof;
+        assert!(registry_id == object::uid_to_inner(&registry.id), EWrongRegistry);
         object::delete(id);
         assert!(
             dof::exists_with_type<ID, TokenBox>(&registry.id, box_id),
